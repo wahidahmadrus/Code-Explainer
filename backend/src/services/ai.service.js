@@ -106,69 +106,57 @@ export function parseAIJsonResponse(rawText) {
   }
 }
 
-function requireString(value, fieldName) {
-  if (typeof value !== "string") {
-    throw createInvalidResponseError(new Error(`AI response field "${fieldName}" must be a string.`));
-  }
+function normalizeString(value) {
+  return typeof value === "string" ? value : "";
 }
 
-function requireObject(value) {
+function normalizeStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter((item) => typeof item === "string");
+}
+
+function normalizeObject(value) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw createInvalidResponseError(new Error("AI response must be a JSON object."));
+    return {};
   }
-}
 
-function requireStringArray(value, fieldName) {
-  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
-    throw createInvalidResponseError(new Error(`AI response field "${fieldName}" must be an array of strings.`));
-  }
+  return value;
 }
 
 function validateExplainResponse(data) {
-  requireObject(data);
-  requireString(data.summary, "summary");
-  requireStringArray(data.lineByLine, "lineByLine");
-  requireStringArray(data.concepts, "concepts");
-  requireStringArray(data.mistakes, "mistakes");
-
-  if (data.improvedCode == null) {
-    data.improvedCode = "";
-  }
-
-  requireString(data.improvedCode, "improvedCode");
+  const response = normalizeObject(data);
 
   return {
-    summary: data.summary,
-    lineByLine: data.lineByLine,
-    concepts: data.concepts,
-    mistakes: data.mistakes,
-    improvedCode: data.improvedCode,
+    summary: normalizeString(response.summary),
+    lineByLine: normalizeStringArray(response.lineByLine),
+    concepts: normalizeStringArray(response.concepts),
+    mistakes: normalizeStringArray(response.mistakes),
+    improvedCode: normalizeString(response.improvedCode),
   };
 }
 
 function validateGenerateResponse(data) {
-  requireObject(data);
-  requireString(data.code, "code");
-  requireString(data.explanation, "explanation");
-  requireStringArray(data.concepts, "concepts");
+  const response = normalizeObject(data);
 
   return {
-    code: data.code,
-    explanation: data.explanation,
-    concepts: data.concepts,
+    code: normalizeString(response.code),
+    explanation: normalizeString(response.explanation),
+    concepts: normalizeStringArray(response.concepts),
   };
 }
 
-async function getJsonCompletion(messages) {
-  ensureGroqApiKey();
-
-  let completion;
-
+async function createJsonCompletion(messages) {
   try {
-    completion = await client.chat.completions.create({
+    return await client.chat.completions.create({
       model: GROQ_MODEL,
       messages,
-      temperature: 0.2,
+      temperature: 0.1,
+      response_format: {
+        type: "json_object",
+      },
     });
   } catch (requestError) {
     if (requestError.status === 401 || requestError.message?.includes("Invalid API Key")) {
@@ -180,6 +168,12 @@ async function getJsonCompletion(messages) {
 
     throw requestError;
   }
+}
+
+async function getJsonCompletion(messages) {
+  ensureGroqApiKey();
+
+  let completion = await createJsonCompletion(messages);
 
   const content = completion.choices?.[0]?.message?.content;
 
@@ -189,7 +183,29 @@ async function getJsonCompletion(messages) {
     throw error;
   }
 
-  return parseAIJsonResponse(content);
+  try {
+    return parseAIJsonResponse(content);
+  } catch (parseError) {
+    completion = await createJsonCompletion([
+      ...messages,
+      {
+        role: "user",
+        content:
+          "Your previous response was invalid JSON. Return only a valid JSON object matching the required structure.",
+      },
+    ]);
+
+    const retryContent = completion.choices?.[0]?.message?.content;
+
+    if (!retryContent) {
+      const error = new Error("Groq response was empty.");
+      error.status = 502;
+      error.cause = parseError;
+      throw error;
+    }
+
+    return parseAIJsonResponse(retryContent);
+  }
 }
 
 export async function explainCodeWithAI(language, code) {
@@ -197,13 +213,17 @@ export async function explainCodeWithAI(language, code) {
     {
       role: "system",
       content:
-        "You are a friendly beginner programming tutor. Use simple English. Return JSON only. Do not use markdown. Do not use code fences. Do not include extra text outside JSON.",
+        "You are an API that returns only valid JSON. Return a single JSON object. Do not use markdown. Do not use code fences. Do not include extra text outside JSON.",
     },
     {
       role: "user",
       content: `Explain this ${language} code.
 
 Rules:
+- Return JSON only.
+- No markdown.
+- No code fences.
+- Escape all new lines and quotes correctly inside JSON strings.
 - Explain like a friendly beginner programming tutor.
 - Use simple English.
 - Assume the user is a beginner.
@@ -212,12 +232,8 @@ Rules:
 - Mention important concepts.
 - Only include realistic beginner mistakes related to this code.
 - Set improvedCode to an empty string if the original code is already good.
-- Return JSON only.
-- Do not use markdown.
-- Do not use code fences.
-- Do not include extra text outside the JSON object.
 
-Return this exact JSON structure:
+Return exactly this JSON object:
 {
   "summary": "string",
   "lineByLine": ["string"],
@@ -239,7 +255,7 @@ export async function generateCodeWithAI(language, instruction) {
     {
       role: "system",
       content:
-        "You convert beginner programming requests into clean code. Return JSON only. Do not use markdown. Do not use code fences. Do not include extra text outside JSON.",
+        "You are an API that returns only valid JSON. Return a single JSON object. Do not use markdown. Do not use code fences. Do not include extra text outside JSON.",
     },
     {
       role: "user",
@@ -247,18 +263,28 @@ export async function generateCodeWithAI(language, instruction) {
 ${instruction}
 
 Rules:
-- Generate beginner-friendly code.
-- Match the selected programming language.
-- Keep the code clean and beginner-friendly.
-- Add comments only when useful.
-- Keep the explanation short.
-- Mention concepts used.
 - Return JSON only.
-- Do not use markdown.
-- Do not use code fences.
-- Do not include extra text outside the JSON object.
+- No markdown.
+- No triple-backtick code fences.
+- Escape all new lines and quotes correctly inside JSON strings.
+- The code value must be a valid JSON string.
+- Do not put raw unescaped code outside the JSON string.
+- Match the selected programming language.
+- Prefer the simplest beginner-friendly solution.
+- For basic programming requests, prefer console-based code.
+- Do not use GUI libraries like tkinter unless the user specifically asks for a GUI, canvas, drawing, or graphics.
+- Do not use recursion unless the user specifically asks for recursion.
+- For pattern problems like pyramid, triangle, stars, or shapes, generate console pattern code by default.
+- If the request is vague, choose the most common beginner interpretation.
+- Include complete runnable code.
+- Keep the code easy for a beginner to read.
+- Add comments only where they help understanding.
+- Explain what the code does.
+- Explain the main loop or important logic.
+- Keep the explanation short and beginner-friendly.
+- Mention concepts used.
 
-Return this exact JSON structure:
+Return exactly this JSON object:
 {
   "code": "string",
   "explanation": "string",

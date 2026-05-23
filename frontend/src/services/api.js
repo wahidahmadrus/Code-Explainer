@@ -1,5 +1,17 @@
 const API_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000").replace(/\/$/, "");
 
+function createHeaders(accessToken) {
+  const headers = {
+    "Content-Type": "application/json",
+  };
+
+  if (accessToken) {
+    headers.Authorization = `Bearer ${accessToken}`;
+  }
+
+  return headers;
+}
+
 async function readResponseBody(response) {
   const text = await response.text();
 
@@ -28,14 +40,12 @@ function getServerErrorMessage(data, status) {
   return `The server returned an error (${status}).`;
 }
 
-async function postJson(path, body) {
+async function requestJson(path, options = {}) {
   try {
+    const { accessToken, ...fetchOptions } = options;
     const response = await fetch(`${API_URL}${path}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(body),
+      ...fetchOptions,
+      headers: createHeaders(accessToken),
     });
 
     const data = await readResponseBody(response);
@@ -54,24 +64,58 @@ async function postJson(path, body) {
   }
 }
 
-export async function explainCode(language, code) {
+async function postJson(path, body, accessToken) {
+  return requestJson(path, {
+    method: "POST",
+    body: JSON.stringify(body),
+    accessToken,
+  });
+}
+
+export async function explainCode(language, code, accessToken) {
   if (!code.trim()) {
     throw new Error("Add code before asking for an explanation.");
   }
 
-  return postJson("/api/ai/explain", {
-    language,
-    code,
-  });
+  return postJson(
+    "/api/ai/explain",
+    {
+      language,
+      code,
+    },
+    accessToken,
+  );
 }
 
-export async function generateCode(language, instruction) {
+export async function generateCode(language, instruction, accessToken) {
   if (!instruction.trim()) {
     throw new Error("Describe what you want to build before generating code.");
   }
 
-  return postJson("/api/ai/generate", {
-    language,
-    instruction,
+  return postJson(
+    "/api/ai/generate",
+    {
+      language,
+      instruction,
+    },
+    accessToken,
+  );
+}
+
+export async function saveSnippet(snippet, accessToken) {
+  return postJson("/api/snippets", snippet, accessToken);
+}
+
+export async function getSnippets(accessToken) {
+  return requestJson("/api/snippets", {
+    method: "GET",
+    accessToken,
+  });
+}
+
+export async function deleteSnippet(id, accessToken) {
+  return requestJson(`/api/snippets/${id}`, {
+    method: "DELETE",
+    accessToken,
   });
 }

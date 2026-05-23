@@ -1,15 +1,18 @@
-# Admin
+# Code Explainer Admin
 
-Admin dashboard placeholder.
+Admin dashboard MVP for managing users, saved snippets, AI requests, and supported languages.
 
-Planned MVP pages:
+## Local development
 
-- Dashboard
-- Users
-- Snippets/activity
-- Supported languages
-- AI prompt settings
-- Usage/analytics
+```bash
+npm install
+npm run dev
+```
 
-This folder is intentionally minimal for the first milestone.
+The admin app runs on `http://localhost:5174` by default.
 
+Create `admin/.env` when needed:
+
+```bash
+VITE_API_URL=http://localhost:5000
+```

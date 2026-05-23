@@ -1,12 +1,12 @@
 import { useMemo, useState } from "react";
-import { Eraser, Loader2, Play } from "lucide-react";
+import { Eraser, Loader2, Play, Save } from "lucide-react";
 import Button from "../components/Button.jsx";
 import CodeEditor from "../components/CodeEditor.jsx";
 import LanguageSelector from "../components/LanguageSelector.jsx";
 import ModeSelector from "../components/ModeSelector.jsx";
 import OutputPanel from "../components/OutputPanel.jsx";
 import { LANGUAGES, getLanguageSample } from "../constants/languages.js";
-import { explainCode, generateCode } from "../services/api.js";
+import { explainCode, generateCode, saveSnippet } from "../services/api.js";
 
 function cleanText(value) {
   return typeof value === "string" ? value.trim() : "";
@@ -47,7 +47,7 @@ function formatOutput(mode, output) {
     .join("\n\n");
 }
 
-export default function Practice() {
+export default function Practice({ auth, onNavigate }) {
   const [mode, setMode] = useState("explain");
   const [languageName, setLanguageName] = useState("JavaScript");
   const [code, setCode] = useState(getLanguageSample("JavaScript"));
@@ -56,6 +56,10 @@ export default function Practice() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [snippetTitle, setSnippetTitle] = useState("");
+  const [savingSnippet, setSavingSnippet] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+  const [saveError, setSaveError] = useState("");
 
   const selectedLanguage = useMemo(
     () => LANGUAGES.find((language) => language.name === languageName) ?? LANGUAGES[0],
@@ -74,6 +78,8 @@ export default function Practice() {
 
     setOutput(null);
     setError("");
+    setSaveMessage("");
+    setSaveError("");
   }
 
   function handleModeChange(nextMode) {
@@ -81,6 +87,8 @@ export default function Practice() {
     setOutput(null);
     setError("");
     setCopied(false);
+    setSaveMessage("");
+    setSaveError("");
   }
 
   async function handleSubmit() {
@@ -88,14 +96,17 @@ export default function Practice() {
     setError("");
     setOutput(null);
     setCopied(false);
+    setSaveMessage("");
+    setSaveError("");
 
     try {
       const response =
         mode === "explain"
-          ? await explainCode(selectedLanguage.name, code)
-          : await generateCode(selectedLanguage.name, instruction);
+          ? await explainCode(selectedLanguage.name, code, auth?.token)
+          : await generateCode(selectedLanguage.name, instruction, auth?.token);
 
       setOutput(response);
+      setSnippetTitle(`${mode === "explain" ? "Explained" : "Generated"} ${selectedLanguage.name} snippet`);
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : "Something went wrong. Please try again.");
     } finally {
@@ -123,6 +134,39 @@ export default function Practice() {
     setOutput(null);
     setError("");
     setCopied(false);
+    setSaveMessage("");
+    setSaveError("");
+    setSnippetTitle("");
+  }
+
+  async function handleSaveSnippet() {
+    if (!output || !auth?.token) {
+      return;
+    }
+
+    const codeToSave = mode === "generate" ? cleanText(output.code) : code;
+
+    setSavingSnippet(true);
+    setSaveMessage("");
+    setSaveError("");
+
+    try {
+      await saveSnippet(
+        {
+          title: snippetTitle.trim() || `${selectedLanguage.name} snippet`,
+          language: selectedLanguage.name,
+          code: codeToSave,
+          explanation: output,
+          mode,
+        },
+        auth.token,
+      );
+      setSaveMessage("Snippet saved.");
+    } catch (caughtError) {
+      setSaveError(caughtError instanceof Error ? caughtError.message : "Could not save snippet.");
+    } finally {
+      setSavingSnippet(false);
+    }
   }
 
   return (
@@ -190,6 +234,47 @@ export default function Practice() {
           copied={copied}
           onCopy={handleCopy}
         />
+
+        {!loading && !error && output ? (
+          <section className="rounded-lg border border-zinc-200 bg-white p-4 shadow-soft lg:col-start-2 lg:p-5">
+            <div className="flex flex-col gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase text-teal-700">Save</p>
+                <h2 className="text-lg font-semibold text-zinc-950">Save this result</h2>
+              </div>
+
+              {!auth ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900">
+                  <p>Log in to save your snippets.</p>
+                  <div className="mt-3">
+                    <Button variant="secondary" onClick={() => onNavigate("login")}>
+                      Log in
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-3">
+                  <label className="grid gap-2 text-sm font-medium text-zinc-800">
+                    Title
+                    <input
+                      value={snippetTitle}
+                      onChange={(event) => setSnippetTitle(event.target.value)}
+                      className="focus-ring h-10 rounded-lg border border-zinc-300 bg-white px-3 text-sm text-zinc-950"
+                      placeholder="Give this snippet a title"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button icon={Save} onClick={handleSaveSnippet} disabled={savingSnippet}>
+                      {savingSnippet ? "Saving" : "Save snippet"}
+                    </Button>
+                    {saveMessage ? <p className="text-sm font-medium text-emerald-700">{saveMessage}</p> : null}
+                    {saveError ? <p className="text-sm font-medium text-red-700">{saveError}</p> : null}
+                  </div>
+                </div>
+              )}
+            </div>
+          </section>
+        ) : null}
       </div>
     </div>
   );

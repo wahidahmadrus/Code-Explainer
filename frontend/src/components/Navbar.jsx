@@ -1,7 +1,9 @@
-import { Code2, Home, PanelLeft } from "lucide-react";
+import { BookOpen, Code2, Home, LogIn, LogOut, PanelLeft, UserPlus } from "lucide-react";
 import Button from "./Button.jsx";
 
-export default function Navbar({ currentPage, onNavigate }) {
+export default function Navbar({ auth, currentPage, onLogout, onNavigate }) {
+  const userEmail = auth?.user?.email;
+
   return (
     <header className="border-b border-zinc-200 bg-white">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between lg:px-6">
@@ -34,9 +36,42 @@ export default function Navbar({ currentPage, onNavigate }) {
           >
             Home
           </Button>
+          {auth ? (
+            <Button
+              icon={BookOpen}
+              variant={currentPage === "snippets" ? "primary" : "secondary"}
+              onClick={() => onNavigate("snippets")}
+            >
+              Saved
+            </Button>
+          ) : null}
+          {!auth ? (
+            <>
+              <Button
+                icon={LogIn}
+                variant={currentPage === "login" ? "primary" : "secondary"}
+                onClick={() => onNavigate("login")}
+              >
+                Login
+              </Button>
+              <Button
+                icon={UserPlus}
+                variant={currentPage === "signup" ? "primary" : "ghost"}
+                onClick={() => onNavigate("signup")}
+              >
+                Signup
+              </Button>
+            </>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="max-w-[180px] truncate text-xs font-medium text-zinc-500">{userEmail}</span>
+              <Button icon={LogOut} variant="ghost" onClick={onLogout}>
+                Logout
+              </Button>
+            </div>
+          )}
         </nav>
       </div>
     </header>
   );
 }
-
